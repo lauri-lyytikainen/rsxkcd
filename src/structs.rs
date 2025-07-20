@@ -1,5 +1,5 @@
 #[allow(dead_code)] // TODO: Remove this
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 pub struct XkcdComic {
     pub month: String,
     pub num: u32,

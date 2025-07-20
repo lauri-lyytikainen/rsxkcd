@@ -5,19 +5,16 @@ use crate::structs::XkcdComic;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    // let url = "https://xkcd.com/614/info.0.json";
     let connection = initialize_db(&"db.db".to_string());
-    populate_db(&connection);
-    // let response = get_json(url).await?;
-    // let transcript = response.transcript;
+    populate_db(&connection).await?;
     // println!("{:?}", response.title);
     Ok(())
 }
 
-// async fn get_json(url: &str) -> Result<XkcdComic, Error> {
-//     let response = reqwest::get(url).await?.json::<XkcdComic>().await?;
-//     Ok(response)
-// }
+async fn get_json(url: &str) -> Result<XkcdComic, Error> {
+    let response = reqwest::get(url).await?.json::<XkcdComic>().await?;
+    Ok(response)
+}
 
 fn initialize_db(db_name: &String) -> Connection {
     let connection = match sqlite::open(db_name) {
@@ -68,21 +65,31 @@ fn initialize_db(db_name: &String) -> Connection {
     }
     connection
 }
-fn populate_db(connection: &Connection) {
-    let json = XkcdComic {
-        title: "Test title".to_string(),
-        alt: "test".to_string(),
-        day: "test".to_string(),
-        img: "test".to_string(),
-        month: "test".to_string(),
-        news: "test".to_string(),
-        link: "test".to_string(),
-        num: 1,
-        safe_title: "test".to_string(),
-        transcript: "test".to_string(),
-        year: "test".to_string(),
-    };
-    save_comic(connection, json);
+
+async fn populate_db(connection: &Connection) -> Result<(), Error> {
+    //TODO: Check if comics is already populated
+    let mut failed_attempts = 0;
+    let max_attempts = 3;
+    for i in 1..10 {
+        println!("INFO: Fetching comic {i}");
+        let url = format!("https://xkcd.com/{i}/info.0.json");
+        let response = match get_json(&url).await {
+            Ok(comic) => comic,
+            Err(error) => {
+                eprintln!("ERROR: Failed to fetch comic {i}: {error}");
+                failed_attempts += 1;
+                if failed_attempts >= max_attempts {
+                    eprintln!(
+                        "ERROR: Reached max failed attempts ({max_attempts}) while fetching comics. Stopping fetches"
+                    );
+                    return Ok(());
+                }
+                continue;
+            }
+        };
+        save_comic(connection, response);
+    }
+    Ok(())
 }
 
 fn save_comic(connection: &Connection, comic: XkcdComic) {
@@ -90,17 +97,17 @@ fn save_comic(connection: &Connection, comic: XkcdComic) {
         format!(
             "INSERT INTO comics (title, alt, day, img, month, news, link, num, safe_title, transcript, year)
             VALUES ('{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, '{}', '{}', '{}')",
-            comic.title,
-            comic.alt,
-            comic.day,
-            comic.img,
-            comic.month,
-            comic.news,
-            comic.link,
+            comic.title.replace("'", "''"),
+            comic.alt.replace("'", "''"),
+            comic.day.replace("'", "''"),
+            comic.img.replace("'", "''"),
+            comic.month.replace("'", "''"),
+            comic.news.replace("'", "''"),
+            comic.link.replace("'", "''"),
             comic.num,
-            comic.safe_title,
-            comic.transcript,
-            comic.year
+            comic.safe_title.replace("'", "''"),
+            comic.transcript.replace("'", "''"),
+            comic.year.replace("'", "''")
         )
     ) {
         Ok(()) => (),

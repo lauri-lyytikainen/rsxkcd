@@ -1,8 +1,8 @@
 use crate::Connection;
-use crate::Error;
 use crate::State;
 use crate::XkcdComic;
 use crate::fetch_comic;
+use thiserror::Error;
 
 pub fn initialize_db(db_name: &String) -> Connection {
     let connection = match sqlite::open(db_name) {
@@ -12,6 +12,7 @@ pub fn initialize_db(db_name: &String) -> Connection {
     println!("INFO: Database connection successfull: {db_name}");
 
     let mut table_exists = false;
+    // Check if the comics table exists
     // use table to encapsulate connection borrow
     {
         let mut statement = connection
@@ -51,10 +52,43 @@ pub fn initialize_db(db_name: &String) -> Connection {
         }
         println!("INFO: comics table created");
     }
+
+    table_exists = false;
+    // Check if terms table exists
+    // use table to encapsulate connection borrow
+    {
+        let mut statement = connection
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='terms';")
+            .unwrap();
+
+        while let Ok(State::Row) = statement.next() {
+            let name: String = statement.read::<String, _>("name").unwrap();
+            if name == "terms" {
+                table_exists = true;
+                break;
+            }
+        }
+    }
+    if !table_exists {
+        println!("INFO: terms table not found, creating terms into {db_name}");
+        match connection.execute(
+            "
+                CREATE TABLE terms (
+                    term TEXT,
+                    comicNum NUMBER,
+                    frequency TEXT
+                );
+                ",
+        ) {
+            Ok(()) => (),
+            Err(error) => panic!("PANIC: Failed to create table terms: {error}"),
+        }
+        println!("INFO: terms table created");
+    }
     connection
 }
 
-pub async fn populate_db(connection: &Connection) -> Result<(), Error> {
+pub async fn populate_db(connection: &Connection) -> Result<(), DatabaseError> {
     let newest_comic_num = match fetch_comic(0).await {
         Ok(comic) => {
             println!("INFO: Found newest comic {}", comic.num);
@@ -84,7 +118,8 @@ pub async fn populate_db(connection: &Connection) -> Result<(), Error> {
     let mut fetched_comics_count = 0;
     for i in 1..=newest_comic_num {
         if found_comics.contains(&i) {
-            println!("INFO: Comic {i} already in database, skipping...");
+            // TODO: Make better logging for this
+            // println!("INFO: Comic {i} already in database, skipping...");
             continue;
         }
         if i == 404 {
@@ -134,4 +169,43 @@ pub fn save_comic(connection: &Connection, comic: XkcdComic) {
         Ok(()) => (),
         Err(error) => eprintln!("ERROR: Failed to insert a comic to database: {error}")
     };
+}
+
+#[derive(Debug, Error)]
+pub enum DatabaseError {
+    #[error("Failed to load comic from database")]
+    LoadComicError(String),
+}
+
+pub fn load_comics(connection: &Connection, amount: u32) -> Result<Vec<XkcdComic>, DatabaseError> {
+    let mut statement = connection
+        .prepare("SELECT * FROM comics LIMIT ?")
+        .map_err(|e| DatabaseError::LoadComicError(e.to_string()))?;
+    statement
+        .bind((1, amount as i64))
+        .map_err(|e| DatabaseError::LoadComicError(e.to_string()))?;
+
+    let mut comics = Vec::new();
+    while let Ok(State::Row) = statement.next() {
+        let comic = XkcdComic {
+            title: statement.read::<String, _>("title").unwrap_or_default(),
+            alt: statement.read::<String, _>("alt").unwrap_or_default(),
+            day: statement.read::<String, _>("day").unwrap_or_default(),
+            img: statement.read::<String, _>("img").unwrap_or_default(),
+            month: statement.read::<String, _>("month").unwrap_or_default(),
+            news: statement.read::<String, _>("news").unwrap_or_default(),
+            link: statement.read::<String, _>("link").unwrap_or_default(),
+            num: statement.read::<i64, _>("num").unwrap_or(0) as u32,
+            safe_title: statement
+                .read::<String, _>("safe_title")
+                .unwrap_or_default(),
+            transcript: statement
+                .read::<String, _>("transcript")
+                .unwrap_or_default(),
+            year: statement.read::<String, _>("year").unwrap_or_default(),
+        };
+        comics.push(comic);
+    }
+
+    Ok(comics)
 }

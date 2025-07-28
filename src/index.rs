@@ -40,6 +40,13 @@ pub fn comic_to_terms(comic: &XkcdComic) -> HashMap<String, i32> {
             .to_lowercase()
             .to_string();
         let stemmed = stem(&cleaned);
+        if stemmed.is_empty() {
+            println!(
+                "WARN: Found empty stemmed word in comic {}: {}",
+                comic.num, cleaned
+            );
+            continue;
+        }
         if !stemmed.is_empty() && !ignored_words.contains(&stemmed.as_str()) {
             *searchable_terms.entry(stemmed).or_insert(0) += 1;
         }

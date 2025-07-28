@@ -2,6 +2,8 @@ use crate::Connection;
 use crate::State;
 use crate::XkcdComic;
 use crate::fetch_comic;
+use crate::index::comic_to_terms;
+use std::collections::HashMap;
 use thiserror::Error;
 
 pub fn initialize_db(db_name: &String) -> Connection {
@@ -11,81 +13,34 @@ pub fn initialize_db(db_name: &String) -> Connection {
     };
     println!("INFO: Database connection successfull: {db_name}");
 
-    let mut table_exists = false;
-    // Check if the comics table exists
-    // use table to encapsulate connection borrow
-    {
-        let mut statement = connection
-            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='comics';")
-            .unwrap();
+    match connection.execute(
+        "
+    CREATE TABLE IF NOT EXISTS comics (
+        month TEXT,
+        num INTEGER PRIMARY KEY,
+        link TEXT,
+        year TEXT,
+        news TEXT,
+        safe_title TEXT,
+        transcript TEXT,
+        alt TEXT,
+        img TEXT,
+        title TEXT,
+        day TEXT
+    );
 
-        while let Ok(State::Row) = statement.next() {
-            let name: String = statement.read::<String, _>("name").unwrap();
-            if name == "comics" {
-                table_exists = true;
-                break;
-            }
-        }
+    CREATE TABLE IF NOT EXISTS terms (
+        term TEXT,
+        comicNum INTEGER,
+        frequency INTEGER,
+        PRIMARY KEY (comicNum, term),
+        FOREIGN KEY (comicNum) REFERENCES comics(num)
+    );
+",
+    ) {
+        Ok(_) => connection,
+        Err(e) => panic!("PANIC: Failed to initialize_db {e}"),
     }
-
-    if !table_exists {
-        println!("INFO: comics table not found, creating comics into {db_name}");
-        match connection.execute(
-            "
-                CREATE TABLE comics (
-                    month TEXT,
-                    num NUMBER,
-                    link TEXT,
-                    year TEXT,
-                    news TEXT,
-                    safe_title TEXT,
-                    transcript TEXT,
-                    alt TEXT,
-                    img TEXT,
-                    title TEXT,
-                    day TEXT
-                );
-                ",
-        ) {
-            Ok(()) => (),
-            Err(error) => panic!("PANIC: Failed to create table comics: {error}"),
-        }
-        println!("INFO: comics table created");
-    }
-
-    table_exists = false;
-    // Check if terms table exists
-    // use table to encapsulate connection borrow
-    {
-        let mut statement = connection
-            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='terms';")
-            .unwrap();
-
-        while let Ok(State::Row) = statement.next() {
-            let name: String = statement.read::<String, _>("name").unwrap();
-            if name == "terms" {
-                table_exists = true;
-                break;
-            }
-        }
-    }
-    if !table_exists {
-        println!("INFO: terms table not found, creating terms into {db_name}");
-        match connection.execute(
-            "
-                CREATE TABLE terms (
-                    term TEXT,
-                    comicNum NUMBER,
-                    frequency TEXT
-                );
-                ",
-        ) {
-            Ok(()) => (),
-            Err(error) => panic!("PANIC: Failed to create table terms: {error}"),
-        }
-        println!("INFO: terms table created");
-    }
-    connection
 }
 
 pub async fn populate_db(connection: &Connection) -> Result<(), DatabaseError> {
@@ -134,7 +89,17 @@ pub async fn populate_db(connection: &Connection) -> Result<(), DatabaseError> {
                 return Ok(());
             }
         };
-        save_comic(connection, comic);
+        save_comic(connection, &comic);
+        let terms = comic_to_terms(&comic);
+        match save_entries(connection, comic.num, &terms) {
+            Ok(()) => println!(
+                "INFO: Saved {} entries from comic {}",
+                terms.len(),
+                comic.num
+            ),
+            Err(e) => println!("ERROR: Failed to save entries for comic {}: {e}", comic.num),
+        };
+
         fetched_comics_count += 1;
     }
     println!(
@@ -148,7 +113,7 @@ pub async fn populate_db(connection: &Connection) -> Result<(), DatabaseError> {
     Ok(())
 }
 
-pub fn save_comic(connection: &Connection, comic: XkcdComic) {
+pub fn save_comic(connection: &Connection, comic: &XkcdComic) {
     match connection.execute(
         format!(
             "INSERT INTO comics (title, alt, day, img, month, news, link, num, safe_title, transcript, year)
@@ -175,14 +140,13 @@ pub fn save_comic(connection: &Connection, comic: XkcdComic) {
 pub enum DatabaseError {
     #[error("Failed to load comic from database")]
     LoadComicError(String),
+    #[error("Failed to save terms to database")]
+    SaveEntryError(String),
 }
 
-pub fn load_comics(connection: &Connection, amount: u32) -> Result<Vec<XkcdComic>, DatabaseError> {
+pub fn load_comics_with_no_terms(connection: &Connection) -> Result<Vec<XkcdComic>, DatabaseError> {
     let mut statement = connection
-        .prepare("SELECT * FROM comics LIMIT ?")
-        .map_err(|e| DatabaseError::LoadComicError(e.to_string()))?;
-    statement
-        .bind((1, amount as i64))
+        .prepare("SELECT * FROM comics WHERE num NOT IN (SELECT comicNum FROM terms)")
         .map_err(|e| DatabaseError::LoadComicError(e.to_string()))?;
 
     let mut comics = Vec::new();
@@ -208,4 +172,64 @@ pub fn load_comics(connection: &Connection, amount: u32) -> Result<Vec<XkcdComic
     }
 
     Ok(comics)
+}
+pub fn load_comics(connection: &Connection) -> Result<Vec<XkcdComic>, DatabaseError> {
+    let mut statement = connection
+        .prepare("SELECT * FROM comics")
+        .map_err(|e| DatabaseError::LoadComicError(e.to_string()))?;
+
+    let mut comics = Vec::new();
+    while let Ok(State::Row) = statement.next() {
+        let comic = XkcdComic {
+            title: statement.read::<String, _>("title").unwrap_or_default(),
+            alt: statement.read::<String, _>("alt").unwrap_or_default(),
+            day: statement.read::<String, _>("day").unwrap_or_default(),
+            img: statement.read::<String, _>("img").unwrap_or_default(),
+            month: statement.read::<String, _>("month").unwrap_or_default(),
+            news: statement.read::<String, _>("news").unwrap_or_default(),
+            link: statement.read::<String, _>("link").unwrap_or_default(),
+            num: statement.read::<i64, _>("num").unwrap_or(0) as u32,
+            safe_title: statement
+                .read::<String, _>("safe_title")
+                .unwrap_or_default(),
+            transcript: statement
+                .read::<String, _>("transcript")
+                .unwrap_or_default(),
+            year: statement.read::<String, _>("year").unwrap_or_default(),
+        };
+        comics.push(comic);
+    }
+
+    Ok(comics)
+}
+
+pub fn save_entries(
+    connection: &Connection,
+    comic_num: u32,
+    terms: &HashMap<String, i32>,
+) -> Result<(), DatabaseError> {
+    //FIXME: Comic 1913 fails because it has no terms after removing 'a'
+
+    if terms.is_empty() {
+        return Err(DatabaseError::SaveEntryError(
+            "No entries provided".to_owned(),
+        ));
+    }
+    for term in terms.keys() {
+        let query = format!(
+            "INSERT INTO terms (term, comicNum, frequency) VALUES ('{}', '{}', '{}')",
+            term,
+            comic_num,
+            terms.get(term).unwrap_or(&0)
+        );
+        match connection.execute(query) {
+            Ok(_) => continue,
+            Err(e) => {
+                return Err(DatabaseError::SaveEntryError(
+                    format!("Failed to save entry {e}").to_owned(),
+                ));
+            }
+        };
+    }
+    Ok(())
 }

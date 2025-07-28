@@ -1,4 +1,3 @@
-#[allow(dead_code)] // TODO: Remove this
 #[derive(Debug, serde::Deserialize)]
 pub struct XkcdComic {
     pub month: String,

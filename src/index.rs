@@ -14,12 +14,8 @@ pub fn update_index(connection: &Connection) {
     for comic in comics {
         let terms = comic_to_terms(&comic);
         match save_entries(connection, comic.num, &terms) {
-            Ok(()) => println!(
-                "INFO: Saved {} entries from comic {}",
-                terms.len(),
-                comic.num
-            ),
-            Err(e) => println!("ERROR: Failed to save entries for comic {}: {e}", comic.num),
+            Ok(()) => log_info!("Saved {} entries from comic {}", terms.len(), comic.num),
+            Err(e) => log_error!("Failed to save entries for comic {}: {}", comic.num, e),
         };
     }
 }
@@ -166,11 +162,9 @@ pub fn comic_to_terms(comic: &XkcdComic) -> HashMap<String, i32> {
             .to_lowercase()
             .to_string();
         let stemmed = stem(&cleaned);
+        // TODO: Handle special cases where there are only empty stemmed words eg title "a"
         if stemmed.is_empty() {
-            println!(
-                "WARN: Found empty stemmed word in comic {}: {}",
-                comic.num, cleaned
-            );
+            log_warning!("Found empty stemmed word in comic {}: {}", comic.num, word);
             continue;
         }
         if !stemmed.is_empty() && !stop_words.contains(&stemmed.as_str()) {

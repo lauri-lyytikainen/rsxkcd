@@ -25,11 +25,12 @@ pub async fn fetch_comic(index: u32) -> Result<XkcdComic, FetchComicError> {
         match get_json(&url).await {
             Ok(comic) => return Ok(comic),
             Err(error) => {
-                eprintln!("ERROR: Failed to fetch comic {index}: {error}");
+                log_error!("Failed to fetch comic {}: {}", index, error);
                 failed_attempts += 1;
                 if failed_attempts >= max_attempts {
-                    eprintln!(
-                        "ERROR: Reached max failed attempts ({max_attempts}) while fetching comics. Stopping fetches"
+                    log_error!(
+                        "Reached max failed attempts ({}) while fetching comics. Stopping fetches",
+                        max_attempts
                     );
                     return Err(FetchComicError::MaxAttemptsReached {
                         index,

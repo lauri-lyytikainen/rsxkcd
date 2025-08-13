@@ -1,3 +1,5 @@
+#[macro_use]
+mod logging;
 use reqwest::Error;
 use sqlite::{self, Connection, State};
 use thiserror::Error;

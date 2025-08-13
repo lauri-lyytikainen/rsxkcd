@@ -11,7 +11,7 @@ pub fn initialize_db(db_name: &String) -> Connection {
         Ok(c) => c,
         Err(error) => panic!("PANIC: Failed to open file {db_name}: {error}"),
     };
-    println!("INFO: Database connection successfull: {db_name}");
+    log_info!("Database connection successfull: {}", db_name);
 
     match connection.execute(
         "
@@ -46,11 +46,11 @@ pub fn initialize_db(db_name: &String) -> Connection {
 pub async fn populate_db(connection: &Connection) -> Result<(), DatabaseError> {
     let newest_comic_num = match fetch_comic(0).await {
         Ok(comic) => {
-            println!("INFO: Found newest comic {}", comic.num);
+            log_info!("Found newest comic {}", comic.num);
             comic.num
         }
         Err(error) => {
-            eprintln!("ERROR: Error fetching newest comic: {error}");
+            log_error!("Error fetching newest comic: {}", error);
             9999
         }
     };
@@ -60,6 +60,7 @@ pub async fn populate_db(connection: &Connection) -> Result<(), DatabaseError> {
         connection
             .iterate("SELECT DISTINCT num FROM comics", |values| {
                 for value in values.iter() {
+                    // FIXME: Collapse this if
                     if let Some(num_str) = value.1 {
                         if let Ok(num) = num_str.parse::<u32>() {
                             found_comics.push(num);
@@ -78,36 +79,33 @@ pub async fn populate_db(connection: &Connection) -> Result<(), DatabaseError> {
             continue;
         }
         if i == 404 {
-            println!("INFO: xkcd author played a prank on comic 404, skipping...");
+            log_warning!("Skipping comic 404 as it is a prank by the author");
             continue;
         }
-        println!("INFO: Fetching comic {i}");
+        log_info!("Fetching comic {i} from https://xkcd.com/{i}");
         let comic = match fetch_comic(i).await {
             Ok(comic) => comic,
             Err(error) => {
-                eprintln!("ERROR: Error fetching comic {i}: {error}");
+                log_error!("Error fetching comic {i}: {}", error);
                 return Ok(());
             }
         };
         save_comic(connection, &comic);
         let terms = comic_to_terms(&comic);
         match save_entries(connection, comic.num, &terms) {
-            Ok(()) => println!(
-                "INFO: Saved {} entries from comic {}",
-                terms.len(),
-                comic.num
-            ),
-            Err(e) => println!("ERROR: Failed to save entries for comic {}: {e}", comic.num),
+            Ok(()) => log_info!("Saved {} entries from comic {}", terms.len(), comic.num),
+            Err(e) => log_error!("Failed to save entries for comic {}: {}", comic.num, e),
         };
 
         fetched_comics_count += 1;
     }
-    println!(
-        "INFO: Found {} comics in database, fetched and saved {fetched_comics_count} comics from https://xkcd.com",
-        found_comics.len()
+    log_info!(
+        "Found {} comics in database, fetched and saved {} comics from https://xkcd.com",
+        found_comics.len(),
+        fetched_comics_count
     );
-    println!(
-        "INFO: Total of {} comics in database",
+    log_info!(
+        "Total of {} comics in database",
         found_comics.len() + fetched_comics_count
     );
     Ok(())
@@ -132,7 +130,7 @@ pub fn save_comic(connection: &Connection, comic: &XkcdComic) {
         )
     ) {
         Ok(()) => (),
-        Err(error) => eprintln!("ERROR: Failed to insert a comic to database: {error}")
+        Err(error) => log_error!("Failed to insert a comic to database: {}", error)
     };
 }
 

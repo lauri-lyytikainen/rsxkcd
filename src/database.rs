@@ -206,8 +206,9 @@ pub fn save_entries(
     comic_num: u32,
     terms: &HashMap<String, i32>,
 ) -> Result<(), DatabaseError> {
-    //FIXME: Comic 1913 fails because it has no terms after removing 'a'
-
+    //FIXME: Comic 1913 fails because it has no terms safe_title
+    // removing the only word that is a stop word
+    // also 3062, 1841, 1913, 2480, 2800
     if terms.is_empty() {
         return Err(DatabaseError::SaveEntryError(
             "No entries provided".to_owned(),
